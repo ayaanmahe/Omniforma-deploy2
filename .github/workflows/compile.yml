@@ -10,9 +10,6 @@ on:
         description: 'Board FQBN'
         required: true
         default: 'arduino:avr:uno'
-      run_id_ref:
-        description: 'Unique ref for artifact naming'
-        required: false
 
 jobs:
   compile:
@@ -23,7 +20,8 @@ jobs:
       - name: Install arduino-cli
         run: |
           curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
-          echo "$HOME/bin" >> $GITHUB_PATH
+          sudo mv $HOME/bin/arduino-cli /usr/local/bin/arduino-cli
+          arduino-cli version
 
       # ── 2. Install AVR core ────────────────────────────────
       - name: Install AVR core
@@ -35,19 +33,17 @@ jobs:
       - name: Write sketch
         run: |
           mkdir -p /tmp/sketch/sketch
-          cat << 'SKETCHEOF' > /tmp/sketch/sketch/sketch.ino
-          ${{ github.event.inputs.code }}
-          SKETCHEOF
+          printf '%s' '${{ github.event.inputs.code }}' > /tmp/sketch/sketch/sketch.ino
+          echo "Sketch written:"
+          cat /tmp/sketch/sketch/sketch.ino
 
       # ── 4. Detect and install libraries ───────────────────
       - name: Detect and install libraries
         run: |
           CODE='${{ github.event.inputs.code }}'
 
-          # Built-in libraries to skip
-          BUILTINS="Wire.h SPI.h EEPROM.h Servo.h SD.h Stepper.h LiquidCrystal.h SoftwareSerial.h HardwareSerial.h Arduino.h avr/ util/ string.h math.h stdio.h stdlib.h"
+          BUILTINS="Wire.h SPI.h EEPROM.h Servo.h SD.h Stepper.h LiquidCrystal.h SoftwareSerial.h HardwareSerial.h Arduino.h"
 
-          # Header to library name map
           declare -A LIBMAP
           LIBMAP["DHT.h"]="DHT sensor library"
           LIBMAP["DHT11.h"]="DHT sensor library"
@@ -59,12 +55,9 @@ jobs:
           LIBMAP["Adafruit_NeoPixel.h"]="Adafruit NeoPixel"
           LIBMAP["FastLED.h"]="FastLED"
           LIBMAP["IRremote.h"]="IRremote"
-          LIBMAP["IRrecv.h"]="IRremote"
           LIBMAP["LiquidCrystal_I2C.h"]="LiquidCrystal I2C"
           LIBMAP["NewPing.h"]="NewPing"
-          LIBMAP["Ultrasonic.h"]="Ultrasonic"
           LIBMAP["Keypad.h"]="Keypad"
-          LIBMAP["Keypad_I2C.h"]="Keypad"
           LIBMAP["RTClib.h"]="RTClib"
           LIBMAP["DS3231.h"]="DS3231"
           LIBMAP["OneWire.h"]="OneWire"
@@ -72,113 +65,60 @@ jobs:
           LIBMAP["TM1637Display.h"]="TM1637"
           LIBMAP["HX711.h"]="HX711"
           LIBMAP["MFRC522.h"]="MFRC522"
-          LIBMAP["WiFi.h"]="WiFi"
-          LIBMAP["ESP8266WiFi.h"]="ESP8266WiFi"
           LIBMAP["PubSubClient.h"]="PubSubClient"
           LIBMAP["ArduinoJson.h"]="ArduinoJson"
-          LIBMAP["WiFiManager.h"]="WiFiManager"
           LIBMAP["Blynk.h"]="Blynk"
-          LIBMAP["BlynkSimpleEsp8266.h"]="Blynk"
-          LIBMAP["BlynkSimpleEsp32.h"]="Blynk"
-          LIBMAP["U8glib.h"]="U8glib"
           LIBMAP["U8g2lib.h"]="U8g2"
-          LIBMAP["TFT.h"]="TFT"
           LIBMAP["Adafruit_ILI9341.h"]="Adafruit ILI9341"
           LIBMAP["Adafruit_ST7735.h"]="Adafruit ST7735 and ST7789 Library"
           LIBMAP["MPU6050.h"]="MPU6050"
           LIBMAP["Adafruit_MPU6050.h"]="Adafruit MPU6050"
-          LIBMAP["Adafruit_ADXL345_U.h"]="Adafruit ADXL345"
-          LIBMAP["Adafruit_HMC5883_U.h"]="Adafruit HMC5883 Unified"
-          LIBMAP["Servo.h"]="Servo"
-          LIBMAP["ESP32Servo.h"]="ESP32Servo"
-          LIBMAP["SSD1306Wire.h"]="ESP8266 and ESP32 OLED driver for SSD1306 displays"
-          LIBMAP["LoRa.h"]="LoRa"
-          LIBMAP["RadioHead.h"]="RadioHead"
+          LIBMAP["AccelStepper.h"]="AccelStepper"
+          LIBMAP["Adafruit_MotorShield.h"]="Adafruit Motor Shield V2 Library"
+          LIBMAP["NTPClient.h"]="NTPClient"
+          LIBMAP["TinyGPS++.h"]="TinyGPSPlus"
+          LIBMAP["Bounce2.h"]="Bounce2"
           LIBMAP["RF24.h"]="RF24"
           LIBMAP["nRF24L01.h"]="RF24"
-          LIBMAP["Ethernet.h"]="Ethernet"
-          LIBMAP["EthernetClient.h"]="Ethernet"
-          LIBMAP["GSM.h"]="GSM"
-          LIBMAP["TinyGPS.h"]="TinyGPS"
-          LIBMAP["TinyGPS++.h"]="TinyGPSPlus"
-          LIBMAP["SoftwareSerial.h"]="SoftwareSerial"
-          LIBMAP["AltSoftSerial.h"]="AltSoftSerial"
+          LIBMAP["LoRa.h"]="LoRa"
+          LIBMAP["ArduinoJson.h"]="ArduinoJson"
           LIBMAP["Encoder.h"]="Encoder"
-          LIBMAP["RotaryEncoder.h"]="RotaryEncoder"
-          LIBMAP["Bounce2.h"]="Bounce2"
           LIBMAP["TimerOne.h"]="TimerOne"
-          LIBMAP["MsTimer2.h"]="MsTimer2"
-          LIBMAP["SimpleTimer.h"]="SimpleTimer"
           LIBMAP["elapsedMillis.h"]="elapsedMillis"
-          LIBMAP["TaskScheduler.h"]="TaskScheduler"
-          LIBMAP["ArduinoSTL.h"]="ArduinoSTL"
-          LIBMAP["LinkedList.h"]="LinkedList"
-          LIBMAP["CircularBuffer.h"]="CircularBuffer"
-          LIBMAP["QList.h"]="QList"
-          LIBMAP["Stepper.h"]="Stepper"
-          LIBMAP["AccelStepper.h"]="AccelStepper"
-          LIBMAP["AFMotor.h"]="Adafruit Motor Shield library"
-          LIBMAP["Adafruit_MotorShield.h"]="Adafruit Motor Shield V2 Library"
-          LIBMAP["L298N.h"]="L298N"
-          LIBMAP["ezButton.h"]="ezButton"
-          LIBMAP["ezLED.h"]="ezLED"
-          LIBMAP["Arduino_JSON.h"]="Arduino_JSON"
-          LIBMAP["SPIFFS.h"]="SPIFFS"
-          LIBMAP["LittleFS.h"]="LittleFS"
-          LIBMAP["WebServer.h"]="WebServer"
-          LIBMAP["ESPAsyncWebServer.h"]="ESPAsyncWebServer"
-          LIBMAP["AsyncTCP.h"]="AsyncTCP"
-          LIBMAP["Ticker.h"]="Ticker"
-          LIBMAP["NTPClient.h"]="NTPClient"
-          LIBMAP["Time.h"]="Time"
-          LIBMAP["TimeLib.h"]="Time"
-          LIBMAP["Timezone.h"]="Timezone"
-          LIBMAP["DS1307RTC.h"]="DS1307RTC"
-          LIBMAP["PCF8574.h"]="PCF8574"
-          LIBMAP["MCP23017.h"]="Adafruit MCP23017 Arduino Library"
-          LIBMAP["ShiftRegister74HC595.h"]="ShiftRegister74HC595"
-          LIBMAP["MAX7219.h"]="MD_MAX72XX"
+          LIBMAP["QTRSensors.h"]="QTRSensors"
+          LIBMAP["VL53L0X.h"]="VL53L0X"
+          LIBMAP["MQUnifiedsensor.h"]="MQUnifiedsensor"
+          LIBMAP["Adafruit_Fingerprint.h"]="Adafruit Fingerprint Sensor Library"
+          LIBMAP["ESP32Servo.h"]="ESP32Servo"
           LIBMAP["MD_MAX72xx.h"]="MD_MAX72XX"
           LIBMAP["MD_Parola.h"]="MD_Parola"
           LIBMAP["Adafruit_PWMServoDriver.h"]="Adafruit PWM Servo Driver Library"
-          LIBMAP["PCA9685.h"]="Adafruit PWM Servo Driver Library"
-          LIBMAP["QTRSensors.h"]="QTRSensors"
-          LIBMAP["VL53L0X.h"]="VL53L0X"
-          LIBMAP["Adafruit_VL53L0X.h"]="Adafruit_VL53L0X"
-          LIBMAP["HCSR04.h"]="HCSR04"
-          LIBMAP["MQ2.h"]="MQUnifiedsensor"
-          LIBMAP["MQUnifiedsensor.h"]="MQUnifiedsensor"
-          LIBMAP["Adafruit_Fingerprint.h"]="Adafruit Fingerprint Sensor Library"
-          LIBMAP["SIM800L.h"]="SIM800L"
+          LIBMAP["ShiftRegister74HC595.h"]="ShiftRegister74HC595"
+          LIBMAP["PCF8574.h"]="PCF8574"
+          LIBMAP["L298N.h"]="L298N"
+          LIBMAP["ezButton.h"]="ezButton"
+          LIBMAP["TaskScheduler.h"]="TaskScheduler"
 
-          # Extract includes from code
           INCLUDES=$(echo "$CODE" | grep -oP '(?<=#include <)[^>]+' || true)
-
-          echo "Found includes: $INCLUDES"
+          echo "Detected includes: $INCLUDES"
 
           for HEADER in $INCLUDES; do
-            # Skip builtins
             SKIP=false
             for B in $BUILTINS; do
-              if [[ "$HEADER" == "$B" ]]; then
-                SKIP=true
-                break
-              fi
+              if [[ "$HEADER" == "$B" ]]; then SKIP=true; break; fi
             done
             if [ "$SKIP" = true ]; then
               echo "Skipping built-in: $HEADER"
               continue
             fi
 
-            # Check map
             if [[ -n "${LIBMAP[$HEADER]}" ]]; then
               LIBNAME="${LIBMAP[$HEADER]}"
-              echo "Installing mapped library: $LIBNAME (for $HEADER)"
+              echo "Installing: $LIBNAME (for $HEADER)"
               arduino-cli lib install "$LIBNAME" || echo "Warning: could not install $LIBNAME"
             else
-              # Try searching by header name
               SEARCH="${HEADER%.h}"
-              echo "Searching for unknown library: $SEARCH"
+              echo "Searching for: $SEARCH"
               RESULT=$(arduino-cli lib search "$SEARCH" --format json 2>/dev/null | python3 -c "
           import json,sys
           data=json.load(sys.stdin)
@@ -186,10 +126,10 @@ jobs:
           if libs: print(libs[0]['name'])
           " 2>/dev/null || echo "")
               if [[ -n "$RESULT" ]]; then
-                echo "Auto-found: $RESULT"
+                echo "Found: $RESULT — installing"
                 arduino-cli lib install "$RESULT" || echo "Warning: could not install $RESULT"
               else
-                echo "Could not find library for $HEADER — skipping"
+                echo "No library found for $HEADER — skipping"
               fi
             fi
           done
@@ -209,6 +149,7 @@ jobs:
             --output-dir /tmp/output \
             /tmp/sketch/sketch
           echo "Compile successful"
+          ls /tmp/output/
 
       # ── 6. Upload HEX as artifact ──────────────────────────
       - name: Upload HEX artifact
