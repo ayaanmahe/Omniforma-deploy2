@@ -47,9 +47,13 @@ jobs:
         run: |
           CODE="$CODE"
 
-          BUILTINS="Wire.h SPI.h EEPROM.h Servo.h SD.h Stepper.h LiquidCrystal.h SoftwareSerial.h HardwareSerial.h Arduino.h"
+          BUILTINS="Wire.h SPI.h EEPROM.h SoftwareSerial.h HardwareSerial.h Arduino.h avr/ pgmspace.h"
 
           declare -A LIBMAP
+          LIBMAP["LiquidCrystal.h"]="LiquidCrystal"
+          LIBMAP["Servo.h"]="Servo"
+          LIBMAP["Stepper.h"]="Stepper"
+          LIBMAP["SD.h"]="SD"
           LIBMAP["DHT.h"]="DHT sensor library"
           LIBMAP["DHT11.h"]="DHT sensor library"
           LIBMAP["Adafruit_SSD1306.h"]="Adafruit SSD1306"
@@ -150,7 +154,6 @@ jobs:
           arduino-cli compile \
             --fqbn ${{ github.event.inputs.fqbn }} \
             --output-dir /tmp/output \
-            --libraries /root/Arduino/libraries \
             /tmp/sketch/sketch
           echo "Compile successful"
           ls /tmp/output/
