@@ -1,17 +1,81 @@
-const express = require('express');
-const cors    = require('cors');
-const fetch   = require('node-fetch');
+const express  = require('express');
+const cors     = require('cors');
+const fetch    = require('node-fetch');
+const AdmZip   = require('adm-zip');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
-// ── Config — set these in Render environment variables ──────
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;   // your PAT
-const GITHUB_OWNER = process.env.GITHUB_OWNER;   // your GitHub username
-const GITHUB_REPO  = process.env.GITHUB_REPO;    // your repo name
-const POLL_INTERVAL = 5000;  // check every 5 seconds
-const MAX_WAIT      = 300000; // wait max 5 minutes
+const GITHUB_TOKEN  = process.env.GITHUB_TOKEN;
+const GITHUB_OWNER  = process.env.GITHUB_OWNER;
+const GITHUB_REPO   = process.env.GITHUB_REPO;
+const POLL_INTERVAL = 5000;
+const MAX_WAIT      = 300000;
+
+const GH_HEADERS = {
+  'Authorization': `Bearer ${GITHUB_TOKEN}`,
+  'Accept': 'application/vnd.github+json',
+  'Content-Type': 'application/json',
+};
+
+// ── Fetch and parse error from Actions log ──────────────────
+async function getActionsError(runId) {
+  try {
+    // Get list of jobs for this run
+    const jobsRes  = await fetch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${runId}/jobs`,
+      { headers: GH_HEADERS }
+    );
+    const jobsData = await jobsRes.json();
+    const job      = jobsData.jobs?.[0];
+    if (!job) return 'Compile failed — no job found';
+
+    // Download the log for this job
+    const logRes = await fetch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/jobs/${job.id}/logs`,
+      { headers: GH_HEADERS, redirect: 'follow' }
+    );
+    const logText = await logRes.text();
+
+    // Extract Arduino compiler error lines
+    // These look like: sketch.ino:6:3: error: 'Seial' was not declared
+    const errorLines = logText
+      .split('\n')
+      .filter(line =>
+        line.includes(': error:') ||
+        line.includes(': warning:') ||
+        line.includes('undefined reference') ||
+        line.includes('ld returned') ||
+        line.includes('collect2:')
+      )
+      .map(line => {
+        // Strip GitHub Actions log timestamp prefix (e.g. "2024-01-01T00:00:00.0000000Z ")
+        return line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, '').trim();
+      })
+      .filter(line => line.length > 0)
+      // Clean up path — replace /tmp/sketch/sketch/ with empty
+      .map(line => line.replace(/\/tmp\/sketch\/sketch\//g, ''))
+      .slice(0, 10); // max 10 error lines
+
+    if (errorLines.length > 0) {
+      return errorLines.join('\n');
+    }
+
+    // Fallback — look for any error keyword
+    const fallback = logText
+      .split('\n')
+      .filter(line => line.toLowerCase().includes('error') && !line.includes('::set-output'))
+      .map(line => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, '').trim())
+      .slice(0, 5)
+      .join('\n');
+
+    return fallback || 'Compile failed — unknown error';
+
+  } catch(e) {
+    return 'Compile failed — could not fetch error details: ' + e.message;
+  }
+}
 
 // ── POST /compile ────────────────────────────────────────────
 app.post('/compile', async (req, res) => {
@@ -30,15 +94,8 @@ app.post('/compile', async (req, res) => {
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/compile.yml/dispatches`,
       {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${GITHUB_TOKEN}`,
-          'Accept': 'application/vnd.github+json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ref: 'main',
-          inputs: { code, fqbn }
-        })
+        headers: GH_HEADERS,
+        body: JSON.stringify({ ref: 'main', inputs: { code, fqbn } })
       }
     );
 
@@ -47,23 +104,16 @@ app.post('/compile', async (req, res) => {
       return res.json({ success: false, error: 'Failed to trigger workflow: ' + err });
     }
 
-    console.log('Workflow triggered — waiting for completion...');
-
     // ── 2. Wait for workflow to appear ───────────────────────
     await new Promise(r => setTimeout(r, 5000));
 
-    // ── 3. Get the latest workflow run ID ────────────────────
-    const runsRes = await fetch(
+    // ── 3. Get latest run ID ─────────────────────────────────
+    const runsRes  = await fetch(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs?per_page=1&event=workflow_dispatch`,
-      {
-        headers: {
-          'Authorization': `Bearer ${GITHUB_TOKEN}`,
-          'Accept': 'application/vnd.github+json',
-        }
-      }
+      { headers: GH_HEADERS }
     );
     const runsData = await runsRes.json();
-    const runId = runsData.workflow_runs?.[0]?.id;
+    const runId    = runsData.workflow_runs?.[0]?.id;
     if (!runId) return res.json({ success: false, error: 'Could not find workflow run' });
 
     console.log('Run ID:', runId);
@@ -79,66 +129,39 @@ app.post('/compile', async (req, res) => {
       }
       await new Promise(r => setTimeout(r, POLL_INTERVAL));
 
-      const runRes = await fetch(
+      const runRes  = await fetch(
         `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${runId}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${GITHUB_TOKEN}`,
-            'Accept': 'application/vnd.github+json',
-          }
-        }
+        { headers: GH_HEADERS }
       );
       const runData = await runRes.json();
-      status     = runData.status;
-      conclusion = runData.conclusion;
+      status        = runData.status;
+      conclusion    = runData.conclusion;
       console.log('Status:', status, '| Conclusion:', conclusion);
     }
 
+    // ── 5. If failed — fetch real error from logs ────────────
     if (conclusion !== 'success') {
-      // Get logs for error message
-      const logsRes = await fetch(
-        `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${runId}/logs`,
-        {
-          headers: {
-            'Authorization': `Bearer ${GITHUB_TOKEN}`,
-            'Accept': 'application/vnd.github+json',
-          }
-        }
-      );
-      return res.json({ success: false, error: 'Compile failed — check GitHub Actions logs for run ' + runId });
+      const errorMsg = await getActionsError(runId);
+      return res.json({ success: false, error: errorMsg });
     }
 
-    // ── 5. Download artifact ─────────────────────────────────
-    const artifactsRes = await fetch(
+    // ── 6. Download artifact ─────────────────────────────────
+    const artifactsRes  = await fetch(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${runId}/artifacts`,
-      {
-        headers: {
-          'Authorization': `Bearer ${GITHUB_TOKEN}`,
-          'Accept': 'application/vnd.github+json',
-        }
-      }
+      { headers: GH_HEADERS }
     );
     const artifactsData = await artifactsRes.json();
-    const artifact = artifactsData.artifacts?.find(a => a.name === 'compiled-hex');
+    const artifact      = artifactsData.artifacts?.find(a => a.name === 'compiled-hex');
     if (!artifact) return res.json({ success: false, error: 'HEX artifact not found' });
 
-    // Download the zip containing the hex
-    const zipRes = await fetch(
+    const zipRes    = await fetch(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/artifacts/${artifact.id}/zip`,
-      {
-        headers: {
-          'Authorization': `Bearer ${GITHUB_TOKEN}`,
-          'Accept': 'application/vnd.github+json',
-        },
-        redirect: 'follow'
-      }
+      { headers: GH_HEADERS, redirect: 'follow' }
     );
-
     const zipBuffer = await zipRes.buffer();
 
-    // ── 6. Unzip and extract HEX ─────────────────────────────
-    const AdmZip = require('adm-zip');
-    const zip    = new AdmZip(zipBuffer);
+    // ── 7. Extract HEX from zip ──────────────────────────────
+    const zip      = new AdmZip(zipBuffer);
     const hexEntry = zip.getEntries().find(e => e.entryName.endsWith('.hex'));
     if (!hexEntry) return res.json({ success: false, error: 'HEX file not found in artifact' });
 
