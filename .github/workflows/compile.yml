@@ -32,18 +32,20 @@ jobs:
 
       # ── 3. Write sketch to file ────────────────────────────
       - name: Write sketch
+        env:
+          SKETCH_CODE: ${{ github.event.inputs.code }}
         run: |
           mkdir -p /tmp/sketch/sketch
-          cat > /tmp/sketch/sketch/sketch.ino << 'SKETCHEOF'
-          ${{ github.event.inputs.code }}
-          SKETCHEOF
+          printf '%s' "$SKETCH_CODE" > /tmp/sketch/sketch/sketch.ino
           echo "Sketch written:"
           cat /tmp/sketch/sketch/sketch.ino
 
       # ── 4. Detect and install libraries ───────────────────
       - name: Detect and install libraries
+        env:
+          CODE: ${{ github.event.inputs.code }}
         run: |
-          CODE='${{ github.event.inputs.code }}'
+          CODE="$CODE"
 
           BUILTINS="Wire.h SPI.h EEPROM.h Servo.h SD.h Stepper.h LiquidCrystal.h SoftwareSerial.h HardwareSerial.h Arduino.h"
 
@@ -148,6 +150,7 @@ jobs:
           arduino-cli compile \
             --fqbn ${{ github.event.inputs.fqbn }} \
             --output-dir /tmp/output \
+            --libraries /root/Arduino/libraries \
             /tmp/sketch/sketch
           echo "Compile successful"
           ls /tmp/output/
