@@ -19,8 +19,9 @@ jobs:
       # ── 1. Install arduino-cli ─────────────────────────────
       - name: Install arduino-cli
         run: |
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
-          sudo mv $HOME/bin/arduino-cli /usr/local/bin/arduino-cli
+          curl -fsSL https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz -o arduino-cli.tar.gz
+          tar -xzf arduino-cli.tar.gz
+          sudo mv arduino-cli /usr/local/bin/arduino-cli
           arduino-cli version
 
       # ── 2. Install AVR core ────────────────────────────────
@@ -33,7 +34,9 @@ jobs:
       - name: Write sketch
         run: |
           mkdir -p /tmp/sketch/sketch
-          printf '%s' '${{ github.event.inputs.code }}' > /tmp/sketch/sketch/sketch.ino
+          cat > /tmp/sketch/sketch/sketch.ino << 'SKETCHEOF'
+          ${{ github.event.inputs.code }}
+          SKETCHEOF
           echo "Sketch written:"
           cat /tmp/sketch/sketch/sketch.ino
 
@@ -81,7 +84,6 @@ jobs:
           LIBMAP["RF24.h"]="RF24"
           LIBMAP["nRF24L01.h"]="RF24"
           LIBMAP["LoRa.h"]="LoRa"
-          LIBMAP["ArduinoJson.h"]="ArduinoJson"
           LIBMAP["Encoder.h"]="Encoder"
           LIBMAP["TimerOne.h"]="TimerOne"
           LIBMAP["elapsedMillis.h"]="elapsedMillis"
@@ -134,7 +136,6 @@ jobs:
             fi
           done
 
-          # Install GitHub libraries from // @lib comments
           GIT_LIBS=$(echo "$CODE" | grep -oP '(?<=// @lib )https://github\.com/\S+' || true)
           for GIT_URL in $GIT_LIBS; do
             echo "Installing GitHub library: $GIT_URL"
