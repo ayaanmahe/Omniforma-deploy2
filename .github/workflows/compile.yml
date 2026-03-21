@@ -146,13 +146,17 @@ jobs:
           for GIT_URL in $GIT_LIBS; do
             CLEAN_URL="${GIT_URL%.git}"
             REPO_NAME=$(basename "$CLEAN_URL")
-            LIB_DIR="/root/Arduino/libraries/$REPO_NAME"
-            echo "Installing GitHub library via git clone: $CLEAN_URL"
+            # Use arduino-cli's actual data directory (writable on GitHub Actions runner)
+            LIB_DIR="$(arduino-cli config dump | grep -oP '(?<=data: ).*' | tr -d '[:space:]')/libraries/$REPO_NAME"
+            # Fallback to home-based path if config parse fails
+            if [ -z "$LIB_DIR" ] || [ "$LIB_DIR" = "/libraries/$REPO_NAME" ]; then
+              LIB_DIR="$HOME/Arduino/libraries/$REPO_NAME"
+            fi
+            mkdir -p "$(dirname "$LIB_DIR")"
+            echo "Installing GitHub library via git clone: $CLEAN_URL -> $LIB_DIR"
             if git clone --depth=1 "$CLEAN_URL" "$LIB_DIR"; then
-              # If no .h file at root, check if library is inside a src/ subdirectory
-              # and move contents up so arduino-cli can find it
               if ! ls "$LIB_DIR"/*.h &>/dev/null && [ -d "$LIB_DIR/src" ]; then
-                echo "Library headers in src/ subdir — moving up"
+                echo "Library headers in src/ — copying up"
                 cp -r "$LIB_DIR/src/"* "$LIB_DIR/"
               fi
               echo "Library installed: $REPO_NAME"
