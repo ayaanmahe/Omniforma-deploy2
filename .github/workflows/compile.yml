@@ -218,7 +218,7 @@ jobs:
       # board
       - name: board
         run: |
-          if [ "${{ github.event.inputs.fqbn }}" == "esp32:esp32:esp32"]; then
+          if [[ "${{ github.event.inputs.fqbn }}" == "esp32:esp32:esp32" ]]; then
             echo "esp32 not supported"
             exit 1
           fi
