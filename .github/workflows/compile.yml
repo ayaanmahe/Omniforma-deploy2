@@ -219,8 +219,9 @@ jobs:
       - name: board
         run: |
           if [ "${{ github.event.inputs.fqbn }}" == "esp32:esp32:esp32" ]; then
-          arduino-cli core install esp32:esp32
-          echo "Installing esp32"
+            arduino-cli core install esp32:esp32
+            echo "Installing esp32"
+          fi
           
           
 
