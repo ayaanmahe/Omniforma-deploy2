@@ -218,8 +218,8 @@ jobs:
       # board
       - name: board
         run: |
-          echo  github.event.inputs.fqbn
-          fi
+          echo  ${{ github.event.inputs.fqbn }}
+          
 
       # ── 5. Compile ─────────────────────────────────────────
       - name: Compile sketch
