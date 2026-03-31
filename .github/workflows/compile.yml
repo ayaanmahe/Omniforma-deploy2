@@ -215,6 +215,11 @@ jobs:
               echo "Warning: could not clone $CLEAN_URL"
             fi
           done
+      # board
+      - name: board
+        run: |
+          echo  github.event.inputs.fqbn
+          fi
 
       # ── 5. Compile ─────────────────────────────────────────
       - name: Compile sketch
