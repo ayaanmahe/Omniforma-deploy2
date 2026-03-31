@@ -125,16 +125,22 @@ app.post('/compile', async (req, res) => {
     }
 
     // ── 2. Wait for workflow to appear ───────────────────────
+    const triggerTime = new Date().toISOString();
     await new Promise(r => setTimeout(r, 5000));
 
-    // ── 3. Get latest run ID ─────────────────────────────────
-    const runsRes  = await fetch(
-      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs?per_page=1&event=workflow_dispatch`,
-      { headers: GH_HEADERS }
-    );
-    const runsData = await runsRes.json();
-    const runId    = runsData.workflow_runs?.[0]?.id;
-    if (!runId) return res.json({ success: false, error: 'Could not find workflow run' });
+    // ── 3. Get latest run ID — match by creation time after trigger ──
+    let runId = null;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const runsRes  = await fetch(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs?per_page=5&event=workflow_dispatch`,
+        { headers: GH_HEADERS }
+      );
+      const runsData = await runsRes.json();
+      const match = runsData.workflow_runs?.find(r => r.created_at >= triggerTime);
+      if (match) { runId = match.id; break; }
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    if (!runId) return res.json({ success: false, error: 'Could not find workflow run — try again' });
 
     console.log('Run ID:', runId);
 
