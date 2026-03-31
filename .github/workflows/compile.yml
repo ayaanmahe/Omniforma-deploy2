@@ -14,8 +14,20 @@ on:
 jobs:
   compile:
     runs-on: ubuntu-latest
-
+    
     steps:
+          # board
+      - name: board
+        run: |
+          if [[ "${{ github.event.inputs.fqbn }}" == "esp32:esp32:esp32" ]]; then
+            echo "::error::ESP32 is not supported in this workflow."
+            exit 1
+          fi
+          
+          if [[ "${{ github.event.inputs.fqbn }}" == "rp2040:rp2040:rp2040" ]]; then
+            echo "::error::rp2040 is not supported in this workflow."
+            exit 1
+          fi
       # ── 1. Install arduino-cli ─────────────────────────────
       - name: Install arduino-cli
         run: |
@@ -215,13 +227,7 @@ jobs:
               echo "Warning: could not clone $CLEAN_URL"
             fi
           done
-      # board
-      - name: board
-        run: |
-          if [[ "${{ github.event.inputs.fqbn }}" == "esp32:esp32:esp32" ]]; then
-            echo "::error::ESP32 is not supported in this workflow."
-            exit 1
-          fi
+
           
           
 
