@@ -1,4 +1,4 @@
-name: Arduino Compile
+name: Arduino Compile & Flash
 
 on:
   workflow_dispatch:
@@ -10,24 +10,41 @@ on:
         description: 'Board FQBN'
         required: true
         default: 'arduino:avr:uno'
+      release_tag:
+        description: 'Release tag for firmware (e.g. v1.0.0). Leave empty to skip release.'
+        required: false
+        default: ''
 
 jobs:
   compile:
     runs-on: ubuntu-latest
-    
+
     steps:
-          # board
-      - name: board
+
+      # ── 0. Validate board ──────────────────────────────────
+      - name: Validate board
         run: |
-          if [[ "${{ github.event.inputs.fqbn }}" == "esp32:esp32:esp32" ]]; then
-            echo "::error::ESP32 is not supported in this workflow."
-            exit 1
-          fi
-          
-          if [[ "${{ github.event.inputs.fqbn }}" == "rp2040:rp2040:rpipico" ]]; then
-            echo "::error::rp2040 is not supported in this workflow."
-            exit 1
-          fi
+          FQBN="${{ github.event.inputs.fqbn }}"
+          case "$FQBN" in
+            arduino:avr:uno|arduino:avr:nano|arduino:avr:mega|arduino:avr:*)
+              echo "BOARD_FAMILY=avr" >> $GITHUB_ENV
+              ;;
+            esp8266:esp8266:*)
+              echo "BOARD_FAMILY=esp8266" >> $GITHUB_ENV
+              ;;
+            esp32:esp32:*)
+              echo "BOARD_FAMILY=esp32" >> $GITHUB_ENV
+              ;;
+            rp2040:rp2040:*)
+              echo "::error::RP2040 is not supported in this workflow."
+              exit 1
+              ;;
+            *)
+              echo "BOARD_FAMILY=unknown" >> $GITHUB_ENV
+              ;;
+          esac
+          echo "Using FQBN: $FQBN"
+
       # ── 1. Install arduino-cli ─────────────────────────────
       - name: Install arduino-cli
         run: |
@@ -36,11 +53,31 @@ jobs:
           sudo mv arduino-cli /usr/local/bin/arduino-cli
           arduino-cli version
 
-      # ── 2. Install AVR core ────────────────────────────────
-      - name: Install AVR core
+      # ── 2. Install board cores ─────────────────────────────
+      - name: Install board cores
         run: |
           arduino-cli core update-index
+
+          # Always install AVR core
           arduino-cli core install arduino:avr
+
+          if [[ "$BOARD_FAMILY" == "esp8266" ]]; then
+            echo "Installing ESP8266 core..."
+            arduino-cli config init
+            arduino-cli config add board_manager.additional_urls \
+              https://arduino.esp8266.com/stable/package_esp8266com_index.json
+            arduino-cli core update-index
+            arduino-cli core install esp8266:esp8266
+          fi
+
+          if [[ "$BOARD_FAMILY" == "esp32" ]]; then
+            echo "Installing ESP32 core..."
+            arduino-cli config init
+            arduino-cli config add board_manager.additional_urls \
+              https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+            arduino-cli core update-index
+            arduino-cli core install esp32:esp32
+          fi
 
       # ── 3. Write sketch to file ────────────────────────────
       - name: Write sketch
@@ -59,7 +96,7 @@ jobs:
         run: |
           CODE="$CODE"
 
-          BUILTINS="Wire.h SPI.h EEPROM.h SoftwareSerial.h HardwareSerial.h Arduino.h avr/ pgmspace.h"
+          BUILTINS="Wire.h SPI.h EEPROM.h SoftwareSerial.h HardwareSerial.h Arduino.h avr/ pgmspace.h ESP8266WiFi.h ESP8266WebServer.h WiFi.h WebServer.h"
 
           declare -A LIBMAP
           LIBMAP["LiquidCrystal.h"]="LiquidCrystal"
@@ -119,7 +156,6 @@ jobs:
           LIBMAP["ezButton.h"]="ezButton"
           LIBMAP["TaskScheduler.h"]="TaskScheduler"
 
-          # ── Helper: resolve header -> library name ─────────
           resolve_libname() {
             local HEADER="$1"
             if [[ -n "${LIBMAP[$HEADER]}" ]]; then
@@ -135,61 +171,33 @@ jobs:
             fi
           }
 
-          # ── Build skip set and uninstall if already present ─
           declare -A SKIP_HEADERS
           while IFS= read -r SKIP_HEADER; do
             [[ -z "$SKIP_HEADER" ]] && continue
             SKIP_HEADERS["$SKIP_HEADER"]=1
-
-            # Resolve library name for this header
             SKIP_LIBNAME=$(resolve_libname "$SKIP_HEADER")
-            if [[ -z "$SKIP_LIBNAME" ]]; then
-              echo "!skip: cannot resolve library name for $SKIP_HEADER — nothing to uninstall"
-              continue
-            fi
-
-            # Check if already installed and uninstall if so
-            if arduino-cli lib list 2>/dev/null | awk '{print $1}' | grep -qxF "$SKIP_LIBNAME"; then
-              echo "!skip: '$SKIP_LIBNAME' is installed — uninstalling"
-              arduino-cli lib uninstall "$SKIP_LIBNAME" \
-                && echo "!skip: uninstalled '$SKIP_LIBNAME'" \
-                || echo "Warning: could not uninstall '$SKIP_LIBNAME'"
-            else
-              echo "!skip: '$SKIP_LIBNAME' is not installed — nothing to uninstall"
+            if [[ -n "$SKIP_LIBNAME" ]]; then
+              if arduino-cli lib list 2>/dev/null | awk '{print $1}' | grep -qxF "$SKIP_LIBNAME"; then
+                arduino-cli lib uninstall "$SKIP_LIBNAME" || true
+              fi
             fi
           done < <(echo "$CODE" | grep -oP '(?<=// !skip #include <)[^>]+' || true)
 
-          if [ ${#SKIP_HEADERS[@]} -gt 0 ]; then
-            echo "Will skip installation for: ${!SKIP_HEADERS[*]}"
-          fi
-
           INCLUDES=$(echo "$CODE" | grep -oP '(?<=#include <)[^>]+' || true)
-          echo "Detected includes: $INCLUDES"
 
           for HEADER in $INCLUDES; do
-            # ── Skip built-ins ─────────────────────────────
             SKIP=false
             for B in $BUILTINS; do
               if [[ "$HEADER" == "$B" ]]; then SKIP=true; break; fi
             done
-            if [ "$SKIP" = true ]; then
-              echo "Skipping built-in: $HEADER"
-              continue
-            fi
-
-            # ── Skip user-marked headers (// !skip) ────────
-            if [[ -n "${SKIP_HEADERS[$HEADER]}" ]]; then
-              echo "Skipping (user-marked): $HEADER"
-              continue
-            fi
+            if [ "$SKIP" = true ]; then continue; fi
+            if [[ -n "${SKIP_HEADERS[$HEADER]}" ]]; then continue; fi
 
             if [[ -n "${LIBMAP[$HEADER]}" ]]; then
               LIBNAME="${LIBMAP[$HEADER]}"
-              echo "Installing: $LIBNAME (for $HEADER)"
               arduino-cli lib install "$LIBNAME" || echo "Warning: could not install $LIBNAME"
             else
               SEARCH="${HEADER%.h}"
-              echo "Searching for: $SEARCH"
               RESULT=$(arduino-cli lib search "$SEARCH" --format json 2>/dev/null | python3 -c "
           import json,sys
           data=json.load(sys.stdin)
@@ -197,10 +205,7 @@ jobs:
           if libs: print(libs[0]['name'])
           " 2>/dev/null || echo "")
               if [[ -n "$RESULT" ]]; then
-                echo "Found: $RESULT — installing"
                 arduino-cli lib install "$RESULT" || echo "Warning: could not install $RESULT"
-              else
-                echo "No library found for $HEADER — skipping"
               fi
             fi
           done
@@ -209,42 +214,127 @@ jobs:
           for GIT_URL in $GIT_LIBS; do
             CLEAN_URL="${GIT_URL%.git}"
             REPO_NAME=$(basename "$CLEAN_URL")
-            # Use arduino-cli's actual data directory (writable on GitHub Actions runner)
-            LIB_DIR="$(arduino-cli config dump | grep -oP '(?<=data: ).*' | tr -d '[:space:]')/libraries/$REPO_NAME"
-            # Fallback to home-based path if config parse fails
-            if [ -z "$LIB_DIR" ] || [ "$LIB_DIR" = "/libraries/$REPO_NAME" ]; then
-              LIB_DIR="$HOME/Arduino/libraries/$REPO_NAME"
-            fi
+            LIB_DIR="$HOME/Arduino/libraries/$REPO_NAME"
             mkdir -p "$(dirname "$LIB_DIR")"
-            echo "Installing GitHub library via git clone: $CLEAN_URL -> $LIB_DIR"
-            if git clone --depth=1 "$CLEAN_URL" "$LIB_DIR"; then
-              if ! ls "$LIB_DIR"/*.h &>/dev/null && [ -d "$LIB_DIR/src" ]; then
-                echo "Library headers in src/ — copying up"
-                cp -r "$LIB_DIR/src/"* "$LIB_DIR/"
-              fi
-              echo "Library installed: $REPO_NAME"
-            else
-              echo "Warning: could not clone $CLEAN_URL"
-            fi
+            git clone --depth=1 "$CLEAN_URL" "$LIB_DIR" || echo "Warning: could not clone $CLEAN_URL"
           done
-
-          
-          
 
       # ── 5. Compile ─────────────────────────────────────────
       - name: Compile sketch
         run: |
+          mkdir -p /tmp/output
           arduino-cli compile \
-            --fqbn ${{ github.event.inputs.fqbn }} \
+            --fqbn "${{ github.event.inputs.fqbn }}" \
             --output-dir /tmp/output \
             /tmp/sketch/sketch
-          echo "Compile successful"
-          ls /tmp/output/
+          echo "Compile successful. Output files:"
+          ls -lh /tmp/output/
 
-      # ── 6. Upload HEX as artifact ──────────────────────────
-      - name: Upload HEX artifact
+      # ── 6. Prepare firmware artifacts ─────────────────────
+      - name: Prepare firmware files
+        run: |
+          mkdir -p /tmp/firmware
+          FQBN="${{ github.event.inputs.fqbn }}"
+
+          if [[ "$BOARD_FAMILY" == "esp8266" ]]; then
+            # ESP8266: single .bin file
+            BIN=$(ls /tmp/output/*.bin 2>/dev/null | head -1)
+            if [ -z "$BIN" ]; then
+              echo "::error::No .bin file found for ESP8266"
+              exit 1
+            fi
+            cp "$BIN" /tmp/firmware/firmware.bin
+            echo "ESP8266 firmware ready: firmware.bin"
+
+            # Generate manifest.json
+            cat > /tmp/firmware/manifest.json << 'EOF'
+          {
+            "name": "Custom Firmware",
+            "version": "1.0.0",
+            "builds": [
+              {
+                "chipFamily": "ESP8266",
+                "parts": [
+                  { "path": "firmware.bin", "offset": 0 }
+                ]
+              }
+            ]
+          }
+          EOF
+
+          elif [[ "$BOARD_FAMILY" == "esp32" ]]; then
+            # ESP32: needs bootloader + partitions + boot_app0 + app
+            BOOTLOADER=$(ls /tmp/output/*.bootloader.bin 2>/dev/null | head -1)
+            PARTITIONS=$(ls /tmp/output/*.partitions.bin 2>/dev/null | head -1)
+            APP=$(ls /tmp/output/sketch.ino.bin 2>/dev/null || ls /tmp/output/*.bin 2>/dev/null | grep -v bootloader | grep -v partition | head -1)
+
+            # Find boot_app0.bin from esp32 core
+            BOOT_APP0=$(find ~/.arduino15 -name "boot_app0.bin" 2>/dev/null | head -1)
+
+            [ -n "$BOOTLOADER" ] && cp "$BOOTLOADER" /tmp/firmware/bootloader.bin
+            [ -n "$PARTITIONS" ] && cp "$PARTITIONS" /tmp/firmware/partitions.bin
+            [ -n "$BOOT_APP0" ] && cp "$BOOT_APP0" /tmp/firmware/boot_app0.bin
+            [ -n "$APP" ] && cp "$APP" /tmp/firmware/firmware.bin
+
+            echo "ESP32 firmware files:"
+            ls -lh /tmp/firmware/
+
+            # Generate manifest.json
+            cat > /tmp/firmware/manifest.json << 'EOF'
+          {
+            "name": "Custom Firmware",
+            "version": "1.0.0",
+            "builds": [
+              {
+                "chipFamily": "ESP32",
+                "parts": [
+                  { "path": "bootloader.bin", "offset": 4096 },
+                  { "path": "partitions.bin", "offset": 32768 },
+                  { "path": "boot_app0.bin", "offset": 57344 },
+                  { "path": "firmware.bin", "offset": 65536 }
+                ]
+              }
+            ]
+          }
+          EOF
+
+          else
+            # AVR: just copy hex
+            HEX=$(ls /tmp/output/*.hex 2>/dev/null | head -1)
+            if [ -z "$HEX" ]; then
+              echo "::error::No .hex file found for AVR"
+              exit 1
+            fi
+            cp "$HEX" /tmp/firmware/firmware.hex
+            echo "AVR firmware ready: firmware.hex"
+            echo "Note: AVR .hex files are not compatible with ESP Web Tools."
+          fi
+
+          echo "--- Final firmware directory ---"
+          ls -lh /tmp/firmware/
+
+      # ── 7. Upload firmware as workflow artifact ────────────
+      - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: compiled-hex
-          path: /tmp/output/*.hex
-          retention-days: 1
+          name: compiled-firmware
+          path: /tmp/firmware/
+          retention-days: 7
+
+      # ── 8. (Optional) Create GitHub Release ───────────────
+      - name: Create GitHub Release
+        if: ${{ github.event.inputs.release_tag != '' && (env.BOARD_FAMILY == 'esp8266' || env.BOARD_FAMILY == 'esp32') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag }}
+          name: Firmware ${{ github.event.inputs.release_tag }}
+          body: |
+            Auto-compiled firmware for board: `${{ github.event.inputs.fqbn }}`
+            
+            ## Flashing Instructions
+            Use [ESP Web Flasher](YOUR_GITHUB_PAGES_URL) to flash directly from your browser.
+            No software installation required — Chrome or Edge only.
+          files: /tmp/firmware/*
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
