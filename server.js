@@ -7,6 +7,26 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
+// In-memory store for the latest compiled firmware binary
+const firmwareStore = {};  // { token: { bin: Buffer, manifest: Object } }
+
+// ── GET /firmware/:token/firmware.bin ────────────────────────
+app.get('/firmware/:token/firmware.bin', (req, res) => {
+  const entry = firmwareStore[req.params.token];
+  if (!entry) return res.status(404).send('Firmware not found or expired');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.send(entry.bin);
+});
+
+// ── GET /firmware/:token/manifest.json ───────────────────────
+app.get('/firmware/:token/manifest.json', (req, res) => {
+  const entry = firmwareStore[req.params.token];
+  if (!entry) return res.status(404).send('Manifest not found or expired');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.json(entry.manifest);
+});
+
 const GITHUB_TOKEN  = process.env.GITHUB_TOKEN;
 const GITHUB_OWNER  = process.env.GITHUB_OWNER;
 const GITHUB_REPO   = process.env.GITHUB_REPO;
@@ -95,7 +115,7 @@ app.post('/compile', async (req, res) => {
       {
         method: 'POST',
         headers: GH_HEADERS,
-        body: JSON.stringify({ ref: 'main', inputs: { code, fqbn } })
+        body: JSON.stringify({ ref: 'test', inputs: { code, fqbn } })
       }
     );
 
@@ -151,8 +171,8 @@ app.post('/compile', async (req, res) => {
       { headers: GH_HEADERS }
     );
     const artifactsData = await artifactsRes.json();
-    const artifact      = artifactsData.artifacts?.find(a => a.name === 'compiled-hex');
-    if (!artifact) return res.json({ success: false, error: 'HEX artifact not found' });
+    const artifact      = artifactsData.artifacts?.find(a => a.name === 'firmware');
+    if (!artifact) return res.json({ success: false, error: 'Firmware artifact not found' });
 
     const zipRes    = await fetch(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/artifacts/${artifact.id}/zip`,
@@ -160,15 +180,45 @@ app.post('/compile', async (req, res) => {
     );
     const zipBuffer = await zipRes.buffer();
 
-    // ── 7. Extract HEX from zip ──────────────────────────────
-    const zip      = new AdmZip(zipBuffer);
-    const hexEntry = zip.getEntries().find(e => e.entryName.endsWith('.hex'));
-    if (!hexEntry) return res.json({ success: false, error: 'HEX file not found in artifact' });
+    // ── 7. Extract firmware.bin + manifest.json from zip ─────
+    const zip           = new AdmZip(zipBuffer);
+    const binEntry      = zip.getEntries().find(e => e.entryName.endsWith('.bin') || e.entryName.endsWith('.hex'));
+    const manifestEntry = zip.getEntries().find(e => e.entryName === 'manifest.json');
 
-    const hex = zip.readAsText(hexEntry);
-    console.log('HEX extracted successfully');
+    if (!binEntry) return res.json({ success: false, error: 'Firmware binary not found in artifact' });
 
-    res.json({ success: true, hex, stdout: 'Compiled via GitHub Actions' });
+    const binBuffer = zip.readFile(binEntry);
+    const isHex     = binEntry.entryName.endsWith('.hex');
+
+    console.log('Firmware extracted successfully:', binEntry.entryName);
+
+    if (isHex) {
+      // AVR: return hex text as before
+      return res.json({ success: true, isHex: true, hex: binBuffer.toString('utf8'), stdout: 'Compiled via GitHub Actions' });
+    }
+
+    // ESP32 / ESP8266: store binary + patch manifest paths to absolute URLs
+    const token   = runId.toString();
+    const baseUrl = `${req.protocol}://${req.get('host')}/firmware/${token}`;
+
+    let manifest = manifestEntry ? JSON.parse(zip.readAsText(manifestEntry)) : {
+      name: 'Omniforma Firmware', version: `ci-${runId}`,
+      builds: [{ chipFamily: 'ESP32', parts: [{ path: 'firmware.bin', offset: 0 }] }]
+    };
+    manifest.builds = manifest.builds.map(b => ({
+      ...b,
+      parts: b.parts.map(p => ({ ...p, path: `${baseUrl}/${p.path}` }))
+    }));
+
+    firmwareStore[token] = { bin: binBuffer, manifest };
+    setTimeout(() => { delete firmwareStore[token]; }, 30 * 60 * 1000); // expire in 30 min
+
+    res.json({
+      success:     true,
+      isHex:       false,
+      manifestUrl: `${baseUrl}/manifest.json`,   // feed this to <esp-web-install-button>
+      stdout:      'Compiled via GitHub Actions'
+    });
 
   } catch(e) {
     console.error('Compile error:', e);
