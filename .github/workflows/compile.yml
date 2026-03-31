@@ -19,6 +19,7 @@ jobs:
           # board
       - name: board
         run: |
+          echo "${{ github.event.inputs.fqbn }}"
           if [[ "${{ github.event.inputs.fqbn }}" == "esp32:esp32:esp32" ]]; then
             echo "::error::ESP32 is not supported in this workflow."
             exit 1
