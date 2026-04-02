@@ -1,3 +1,7 @@
+--- .github/workflows/arduino-compile.yml (原始)
+
+
++++ .github/workflows/arduino-compile.yml (修改后)
 name: Arduino Compile
 
 on:
@@ -14,35 +18,46 @@ on:
 jobs:
   compile:
     runs-on: ubuntu-latest
-    
+
     steps:
-      # board
-      - name: board
+      # ── 0. Board validation ───────────────────────────────
+      - name: Check board support
         run: |
-          if [[ "${{ github.event.inputs.fqbn }}" == *"rp2040:"* ]]; then
+          FQBN="${{ github.event.inputs.fqbn }}"
+          echo "Checking FQBN: $FQBN"
+
+          # Block unsupported boards
+          if [[ "$FQBN" == "rp2040:rp2040:rpipico" ]]; then
             echo "::error::RP2040 is not supported in this workflow."
             exit 1
           fi
-          
-          if [[ ! "${{ github.event.inputs.fqbn }}" =~ ^(arduino:avr:|esp32:esp32:) ]]; then
-            echo "::error::Only Arduino AVR and ESP32 boards are supported in this workflow."
-            exit 1
+
+          # Allow ESP32 variants including ESP32-CAM
+          if [[ "$FQBN" == esp32:* ]]; then
+            echo "ESP32 board detected: $FQBN - Supported!"
           fi
 
       # ── 1. Install arduino-cli ─────────────────────────────
       - name: Install arduino-cli
         run: |
-          curl -fsSL https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz  -o arduino-cli.tar.gz
+          curl -fsSL https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz -o arduino-cli.tar.gz
           tar -xzf arduino-cli.tar.gz
           sudo mv arduino-cli /usr/local/bin/arduino-cli
           arduino-cli version
 
-      # ── 2. Install cores ────────────────────────────────
-      - name: Install cores
+      # ── 2. Update index and install cores ──────────────────
+      - name: Install board cores
         run: |
           arduino-cli core update-index
+
+          # Install AVR core (for Arduino Uno, Nano, etc.)
           arduino-cli core install arduino:avr
+
+          # Install ESP32 core (for all ESP32 boards including ESP32-CAM)
           arduino-cli core install esp32:esp32
+
+          # Install RP2040 core (installed but blocked at validation step if used)
+          arduino-cli core install rp2040:rp2040 || echo "RP2040 core installation failed, continuing..."
 
       # ── 3. Write sketch to file ────────────────────────────
       - name: Write sketch
@@ -120,8 +135,9 @@ jobs:
           LIBMAP["L298N.h"]="L298N"
           LIBMAP["ezButton.h"]="ezButton"
           LIBMAP["TaskScheduler.h"]="TaskScheduler"
-          LIBMAP["esp_camera.h"]="ESP32 Camera"
-          LIBMAP["camera_pins.h"]="ESP32 Camera"
+          # ESP32-CAM specific libraries
+          LIBMAP["esp_camera.h"]="esp32-camera"
+          LIBMAP["camera_pins.h"]="esp32-camera"
 
           # ── Helper: resolve header -> library name ─────────
           resolve_libname() {
@@ -235,18 +251,23 @@ jobs:
       # ── 5. Compile ─────────────────────────────────────────
       - name: Compile sketch
         run: |
+          FQBN="${{ github.event.inputs.fqbn }}"
+          echo "Compiling for FQBN: $FQBN"
+
           arduino-cli compile \
-            --fqbn ${{ github.event.inputs.fqbn }} \
+            --fqbn "$FQBN" \
             --output-dir /tmp/output \
             /tmp/sketch/sketch
-          echo "Compile successful"
-          ls /tmp/output/
 
-      # ── 6. Upload binary as artifact ──────────────────────────
-      - name: Upload binary artifact
+          echo "Compile successful"
+          echo "Output files:"
+          ls -la /tmp/output/
+
+      # ── 6. Upload HEX/BIN as artifact ──────────────────────
+      - name: Upload compiled firmware
         uses: actions/upload-artifact@v4
         with:
-          name: compiled-binary
+          name: compiled-firmware
           path: |
             /tmp/output/*.hex
             /tmp/output/*.bin
