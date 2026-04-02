@@ -177,7 +177,7 @@ app.post('/compile', async (req, res) => {
       { headers: GH_HEADERS }
     );
     const artifactsData = await artifactsRes.json();
-    const artifact      = artifactsData.artifacts?.find(a => a.name === 'firmware');
+    const artifact      = artifactsData.artifacts?.find(a => a.name === 'compiled-firmware');
     if (!artifact) return res.json({ success: false, error: 'Firmware artifact not found' });
 
     const zipRes    = await fetch(
