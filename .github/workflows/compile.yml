@@ -55,7 +55,7 @@ jobs:
           # Install ESP32 core (for all ESP32 boards including ESP32-CAM)
           arduino-cli core install esp32:esp32
 
-          arduino-cli board details -b esp32:esp32:ai-thinker-esp32-cam
+          arduino-cli board details -b esp32:esp32:esp32cam
           
           # Install RP2040 core (installed but blocked at validation step if used)
           # arduino-cli core install rp2040:rp2040 || echo "RP2040 core installation failed, continuing..."
