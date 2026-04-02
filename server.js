@@ -205,7 +205,8 @@ app.post('/compile', async (req, res) => {
 
     // ESP32 / ESP8266: store binary + patch manifest paths to absolute URLs
     const token   = runId.toString();
-    const baseUrl = `${req.protocol}://${req.get('host')}/firmware/${token}`;
+   const proto = req.get('x-forwarded-proto') || req.protocol;
+  const baseUrl = `${proto}://${req.get('host')}/firmware/${token}`;
 
     let manifest = manifestEntry ? JSON.parse(zip.readAsText(manifestEntry)) : {
       name: 'Omniforma Firmware', version: `ci-${runId}`,
