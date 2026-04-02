@@ -16,33 +16,31 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      # board
+          # board
       - name: board
         run: |
-          if [[ "${{ github.event.inputs.fqbn }}" == *"rp2040:"* ]]; then
-            echo "::error::RP2040 is not supported in this workflow."
+          if [[ "${{ github.event.inputs.fqbn }}" == "esp32:esp32:esp32" ]]; then
+            echo "::error::ESP32 is not supported in this workflow."
             exit 1
           fi
           
-          if [[ ! "${{ github.event.inputs.fqbn }}" =~ ^(arduino:avr:|esp32:esp32:) ]]; then
-            echo "::error::Only Arduino AVR and ESP32 boards are supported in this workflow."
+          if [[ "${{ github.event.inputs.fqbn }}" == "rp2040:rp2040:rpipico" ]]; then
+            echo "::error::rp2040 is not supported in this workflow."
             exit 1
           fi
-
       # ── 1. Install arduino-cli ─────────────────────────────
       - name: Install arduino-cli
         run: |
-          curl -fsSL https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz  -o arduino-cli.tar.gz
+          curl -fsSL https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz -o arduino-cli.tar.gz
           tar -xzf arduino-cli.tar.gz
           sudo mv arduino-cli /usr/local/bin/arduino-cli
           arduino-cli version
 
-      # ── 2. Install cores ────────────────────────────────
-      - name: Install cores
+      # ── 2. Install AVR core ────────────────────────────────
+      - name: Install AVR core
         run: |
           arduino-cli core update-index
           arduino-cli core install arduino:avr
-          arduino-cli core install esp32:esp32
 
       # ── 3. Write sketch to file ────────────────────────────
       - name: Write sketch
@@ -120,8 +118,6 @@ jobs:
           LIBMAP["L298N.h"]="L298N"
           LIBMAP["ezButton.h"]="ezButton"
           LIBMAP["TaskScheduler.h"]="TaskScheduler"
-          LIBMAP["esp_camera.h"]="ESP32 Camera"
-          LIBMAP["camera_pins.h"]="ESP32 Camera"
 
           # ── Helper: resolve header -> library name ─────────
           resolve_libname() {
@@ -232,6 +228,9 @@ jobs:
             fi
           done
 
+          
+          
+
       # ── 5. Compile ─────────────────────────────────────────
       - name: Compile sketch
         run: |
@@ -242,12 +241,10 @@ jobs:
           echo "Compile successful"
           ls /tmp/output/
 
-      # ── 6. Upload binary as artifact ──────────────────────────
-      - name: Upload binary artifact
+      # ── 6. Upload HEX as artifact ──────────────────────────
+      - name: Upload HEX artifact
         uses: actions/upload-artifact@v4
         with:
-          name: compiled-binary
-          path: |
-            /tmp/output/*.hex
-            /tmp/output/*.bin
+          name: compiled-hex
+          path: /tmp/output/*.hex
           retention-days: 1
