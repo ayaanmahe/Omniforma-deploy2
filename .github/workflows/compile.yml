@@ -43,8 +43,9 @@ jobs:
           arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
           arduino-cli core update-index
           
-          if [[ "$FQBN" == arduino:avr:* ]]; then
+          if [[ "$FQBN" == arduino:* ]]; then
             # Install AVR core (Uno, Nano, Mega)
+            echo "in arduino"
             arduino-cli core install arduino:avr
           fi
           
