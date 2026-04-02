@@ -42,15 +42,15 @@ jobs:
           arduino-cli cache clean
           arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
           arduino-cli core update-index
-          if [[ "$FQBN" ==arduino:avr:* ]]; then
-            # Install AVR core (for Arduino Uno, Nano, etc.)
+          
+          if [[ "$FQBN" == arduino:avr:* ]]; then
+            # Install AVR core (Uno, Nano, Mega)
             arduino-cli core install arduino:avr
           fi
           
-          if [[ "$FQBN" == esp32:* ]]; then
-            # Install ESP32 core (for all ESP32 boards including ESP32-CAM)
+          if [[ "$FQBN" == esp32:esp32:* ]]; then
+            # Install ESP32 core
             arduino-cli core install esp32:esp32
-            arduino-cli board details -b esp32:esp32:esp32cam
           fi
           
           
