@@ -22,11 +22,6 @@ jobs:
           FQBN="${{ github.event.inputs.fqbn }}"
           echo "Checking FQBN: $FQBN"
 
-          # Block unsupported boards
-          if [[ "$FQBN" == "rp2040:rp2040:rpipico" ]]; then
-            echo "::error::RP2040 is not supported in this workflow."
-            exit 1
-          fi
 
           # Allow ESP32 variants including ESP32-CAM
           if [[ "$FQBN" == esp32:* ]]; then
@@ -47,15 +42,17 @@ jobs:
           arduino-cli cache clean
           arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
           arduino-cli core update-index
+          if [[ "$FQBN" ==arduino:avr:* ]]; then
+            # Install AVR core (for Arduino Uno, Nano, etc.)
+            arduino-cli core install arduino:avr
+          fi
           
-
-          # Install AVR core (for Arduino Uno, Nano, etc.)
-          arduino-cli core install arduino:avr
-
-          # Install ESP32 core (for all ESP32 boards including ESP32-CAM)
-          arduino-cli core install esp32:esp32
-
-          arduino-cli board details -b esp32:esp32:esp32cam
+          if [[ "$FQBN" == esp32:* ]]; then
+            # Install ESP32 core (for all ESP32 boards including ESP32-CAM)
+            arduino-cli core install esp32:esp32
+            arduino-cli board details -b esp32:esp32:esp32cam
+          fi
+          
           
           # Install RP2040 core (installed but blocked at validation step if used)
           # arduino-cli core install rp2040:rp2040 || echo "RP2040 core installation failed, continuing..."
