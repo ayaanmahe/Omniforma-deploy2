@@ -44,18 +44,21 @@ jobs:
       # ── 2. Update index and install cores ──────────────────
       - name: Install board cores
         run: |
+          arduino-cli cache clean
+          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
           arduino-cli core update-index
+          
 
           # Install AVR core (for Arduino Uno, Nano, etc.)
           arduino-cli core install arduino:avr
 
           # Install ESP32 core (for all ESP32 boards including ESP32-CAM)
-          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-          arduino-cli core update-index
           arduino-cli core install esp32:esp32
 
+          arduino-cli board details esp32:esp32:ai-thinker-esp32-cam
+          
           # Install RP2040 core (installed but blocked at validation step if used)
-          arduino-cli core install rp2040:rp2040 || echo "RP2040 core installation failed, continuing..."
+          # arduino-cli core install rp2040:rp2040 || echo "RP2040 core installation failed, continuing..."
 
       # ── 3. Write sketch to file ────────────────────────────
       - name: Write sketch
