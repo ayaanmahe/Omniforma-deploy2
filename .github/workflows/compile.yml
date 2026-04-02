@@ -1,7 +1,3 @@
---- .github/workflows/arduino-compile.yml (原始)
-
-
-+++ .github/workflows/arduino-compile.yml (修改后)
 name: Arduino Compile
 
 on:
