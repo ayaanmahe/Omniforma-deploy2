@@ -42,17 +42,28 @@ jobs:
           arduino-cli cache clean
           arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
           arduino-cli core update-index
+
+          case "$FQBN" in
+            arduino:avr:*)
+              echo "in arduino"
+              arduino-cli core install arduino:avr
+            ;;
+            esp32:esp32:*)
+              arduino-cli core install esp32:esp32
+            ;;
+          esac
           
-          if [[ "$FQBN" == arduino:* ]]; then
+#          if [[ "$FQBN" == arduino:* ]]; then
             # Install AVR core (Uno, Nano, Mega)
-            echo "in arduino"
-            arduino-cli core install arduino:avr
-          fi
+ #           echo "in arduino"
+  #          arduino-cli core install arduino:avr
+   #       fi
           
-          if [[ "$FQBN" == esp32:esp32:* ]]; then
+    #      if [[ "$FQBN" == esp32:esp32:* ]]; then
             # Install ESP32 core
-            arduino-cli core install esp32:esp32
-          fi
+     #       arduino-cli core install esp32:esp32
+      #    fi
+      
           
           
           # Install RP2040 core (installed but blocked at validation step if used)
