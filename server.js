@@ -27,6 +27,15 @@ app.get('/firmware/:token/manifest.json', (req, res) => {
   res.json(entry.manifest);
 });
 
+// ── GET /firmware/:token/:filename (serves bin by filename) ──
+app.get('/firmware/:token/:filename', (req, res) => {
+  const entry = firmwareStore[req.params.token];
+  if (!entry) return res.status(404).send('Firmware not found or expired');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.send(entry.bin);
+});
+
 const GITHUB_TOKEN  = process.env.GITHUB_TOKEN;
 const GITHUB_OWNER  = process.env.GITHUB_OWNER;
 const GITHUB_REPO   = process.env.GITHUB_REPO;
@@ -42,7 +51,6 @@ const GH_HEADERS = {
 // ── Fetch and parse error from Actions log ──────────────────
 async function getActionsError(runId) {
   try {
-    // Get list of jobs for this run
     const jobsRes  = await fetch(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${runId}/jobs`,
       { headers: GH_HEADERS }
@@ -51,15 +59,12 @@ async function getActionsError(runId) {
     const job      = jobsData.jobs?.[0];
     if (!job) return 'Compile failed — no job found';
 
-    // Download the log for this job
     const logRes = await fetch(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/jobs/${job.id}/logs`,
       { headers: GH_HEADERS, redirect: 'follow' }
     );
     const logText = await logRes.text();
 
-    // Extract Arduino compiler error lines
-    // These look like: sketch.ino:6:3: error: 'Seial' was not declared
     const errorLines = logText
       .split('\n')
       .filter(line =>
@@ -69,20 +74,13 @@ async function getActionsError(runId) {
         line.includes('ld returned') ||
         line.includes('collect2:')
       )
-      .map(line => {
-        // Strip GitHub Actions log timestamp prefix (e.g. "2024-01-01T00:00:00.0000000Z ")
-        return line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, '').trim();
-      })
+      .map(line => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, '').trim())
       .filter(line => line.length > 0)
-      // Clean up path — replace /tmp/sketch/sketch/ with empty
       .map(line => line.replace(/\/tmp\/sketch\/sketch\//g, ''))
-      .slice(0, 10); // max 10 error lines
+      .slice(0, 10);
 
-    if (errorLines.length > 0) {
-      return errorLines.join('\n');
-    }
+    if (errorLines.length > 0) return errorLines.join('\n');
 
-    // Fallback — look for any error keyword
     const fallback = logText
       .split('\n')
       .filter(line => line.toLowerCase().includes('error') && !line.includes('::set-output'))
@@ -128,7 +126,7 @@ app.post('/compile', async (req, res) => {
     const triggerTime = new Date().toISOString();
     await new Promise(r => setTimeout(r, 5000));
 
-    // ── 3. Get latest run ID — match by creation time after trigger ──
+    // ── 3. Get latest run ID ─────────────────────────────────
     let runId = null;
     for (let attempt = 0; attempt < 10; attempt++) {
       const runsRes  = await fetch(
@@ -199,23 +197,45 @@ app.post('/compile', async (req, res) => {
     console.log('Firmware extracted successfully:', binEntry.entryName);
 
     if (isHex) {
-      // AVR: return hex text as before
       return res.json({ success: true, isHex: true, hex: binBuffer.toString('utf8'), stdout: 'Compiled via GitHub Actions' });
     }
 
-    // ESP32 / ESP8266: store binary + patch manifest paths to absolute URLs
+    // ── 8. ESP32 / ESP8266: store binary, keep relative paths in manifest ──
     const token   = runId.toString();
-   const proto = req.get('x-forwarded-proto') || req.protocol;
-  const baseUrl = `${proto}://${req.get('host')}/firmware/${token}`;
+    const proto   = req.get('x-forwarded-proto') || req.protocol;
+    const baseUrl = `${proto}://${req.get('host')}/firmware/${token}`;
 
-    let manifest = manifestEntry ? JSON.parse(zip.readAsText(manifestEntry)) : {
-      name: 'Omniforma Firmware', version: `ci-${runId}`,
-      builds: [{ chipFamily: 'ESP32', parts: [{ path: 'firmware.bin', offset: 0 }] }]
-    };
-    manifest.builds = manifest.builds.map(b => ({
-      ...b,
-      parts: b.parts.map(p => ({ ...p, path: `${baseUrl}/${p.path}` }))
-    }));
+    // Determine chip family from fqbn
+    let chipFamily = 'ESP32';
+    if (fqbn.includes('8266')) chipFamily = 'ESP8266';
+
+    // Determine bin filename for the manifest
+    const binFileName = chipFamily === 'ESP8266' ? 'esp8266.bin' : 'esp32.bin';
+
+    let manifest;
+    if (manifestEntry) {
+      // Use manifest from artifact but keep paths relative (just the filename)
+      manifest = JSON.parse(zip.readAsText(manifestEntry));
+      manifest.builds = manifest.builds.map(b => ({
+        ...b,
+        parts: b.parts.map(p => ({
+          ...p,
+          path: binFileName  // ← relative filename only, NOT absolute URL
+        }))
+      }));
+    } else {
+      // Build a default manifest with relative path
+      manifest = {
+        name: 'Omniforma Firmware',
+        version: `ci-${runId}`,
+        builds: [
+          {
+            chipFamily,
+            parts: [{ path: binFileName, offset: 0 }]  // ← relative filename only
+          }
+        ]
+      };
+    }
 
     firmwareStore[token] = { bin: binBuffer, manifest };
     setTimeout(() => { delete firmwareStore[token]; }, 30 * 60 * 1000); // expire in 30 min
@@ -223,7 +243,7 @@ app.post('/compile', async (req, res) => {
     res.json({
       success:     true,
       isHex:       false,
-      manifestUrl: `${baseUrl}/manifest.json`,   // feed this to <esp-web-install-button>
+      manifestUrl: `${baseUrl}/manifest.json`,
       stdout:      'Compiled via GitHub Actions'
     });
 
